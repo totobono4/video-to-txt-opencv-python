@@ -13,10 +13,12 @@ filepath = askopenfilename(title='Select a video...', filetypes=[('mp4 {mp4}')])
 cap = cv.VideoCapture(filepath)
 
 file_name, file_extension = os.path.splitext(os.path.basename(filepath))
-videoSize = "{:n}x{:n}".format(cap.get(cv.CAP_PROP_FRAME_WIDTH), cap.get(cv.CAP_PROP_FRAME_HEIGHT))
-outfile = os.path.join(outpath, "{}({}).txt".format(file_name, videoSize))
+outfile = os.path.join(outpath, "{}.txt".format(file_name))
 
 with open(outfile, mode='w') as f:
+    f.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))
+    f.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_WIDTH)))
+
     while cap.isOpened():
         ret, frame = cap.read()
         # if frame is read correctly ret is True
@@ -24,7 +26,7 @@ with open(outfile, mode='w') as f:
             print("Can't receive frame (stream end?). Exiting ...")
             break
         RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        cv.imshow('frame', RGBframe)
+        cv.imshow('frame', frame)
 
         for row in RGBframe:
             for pixel in row:
