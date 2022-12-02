@@ -11,4 +11,4 @@ if not os.path.isdir(outpath):
 Tk().withdraw()
 inpath = askopenfilename(title='Select a txt...', filetypes=[('txt {txt}')])
 
-Encoding().decode(inpath, outpath)
+Encoding('REPETITION').decode(inpath, outpath)

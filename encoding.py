@@ -5,7 +5,8 @@ from progress.bar import Bar
 
 class Encoding:
     encodings = {
-        "BASIC"
+        "BASIC",
+        "REPETITION"
     }
 
     def __init__(self, encoding=''):
@@ -19,6 +20,8 @@ class Encoding:
             match self.encoding:
                 case "BASIC":
                     self.basic_encoder(inpath, file)
+                case "REPETITION":
+                    self.repetition_encoder(inpath, file)
                 case _:
                     self.basic_encoder(inpath, file)
 
@@ -30,6 +33,8 @@ class Encoding:
             match self.encoding:
                 case "BASIC":
                     self.basic_decoder(file, outfile)
+                case "REPETITION":
+                    self.repetition_decoder(file, outfile)
                 case _:
                     self.basic_decoder(file, outfile)
 
@@ -118,6 +123,91 @@ class Encoding:
                 break
             bar.next()
 
+        bar.finish()
+        out.release()
+        cv.destroyAllWindows()
+
+    def repetition_encoder(self, infile, outfile):
+        cap = cv.VideoCapture(infile)
+
+        outfile.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))
+        outfile.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_WIDTH)))
+
+        totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+        bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                print("Can't receive frame (stream end?). Exiting ...")
+                break
+
+            RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+
+            repetition = 1
+            last_pixel = ''
+
+            for row in RGBframe:
+                for pixel in row:
+                    current_pixel = "{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2])
+                    if last_pixel == '':
+                        last_pixel = current_pixel
+                        continue
+                    if current_pixel == last_pixel:
+                        repetition = repetition+1
+                    else:
+                        outfile.write("{},{};".format(repetition, last_pixel))
+                        repetition = 1
+                        last_pixel = current_pixel
+
+            outfile.write("{},{}".format(repetition, last_pixel))
+            outfile.write('\n')
+            cv.imshow('frame', frame)
+
+            if cv.waitKey(1) == ord('q'):
+                break
+            bar.next()
+        bar.finish()
+        cap.release()
+        cv.destroyAllWindows()
+
+    def repetition_decoder(self, infile, outfile):
+        fourcc = cv.VideoWriter_fourcc(*'XVID')
+        print('reading file...')
+        lines = infile.readlines()
+        frames_size = lines[:2]
+        frames_height = int(frames_size[0])
+        frames_width = int(frames_size[1])
+        out = cv.VideoWriter(outfile, fourcc, 30.0, (frames_width, frames_height))
+        frameslines = lines[2:]
+
+        bar = Bar('Decoding Video', max=len(frameslines), suffix='%(percent)d%%')
+
+        for index in range(len(frameslines)):
+            frame = np.ndarray((frames_height,frames_width,3), dtype=np.uint8)
+            frameline = frameslines[index]
+            repetitions_format = frameline.split(';')
+            pixels = []
+
+            for repetition_format in repetitions_format:
+                repetition, pixel_format = repetition_format.split(',')
+                for _ in range(int(repetition)):
+                    pixels.append(pixel_format[:6])
+
+            for pixelindex in range(len(pixels)):
+                frame[pixelindex//frames_width][pixelindex%frames_width] = [
+                    int(pixels[pixelindex][:2], base=16),
+                    int(pixels[pixelindex][2:4], base=16),
+                    int(pixels[pixelindex][4:], base=16)
+                ]
+
+            newframe = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
+            out.write(newframe)
+            cv.imshow('frame', newframe)
+
+            if cv.waitKey(1) == ord('q'):
+                break
+            bar.next()
         bar.finish()
         out.release()
         cv.destroyAllWindows()
