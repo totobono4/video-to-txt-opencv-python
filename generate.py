@@ -11,4 +11,4 @@ if not os.path.isdir(outpath):
 Tk().withdraw()
 inpath = askopenfilename(title='Select a video...', filetypes=[('mp4 {mp4}')])
 
-Encoding('REPETITION').encode(inpath, outpath)
+Encoding('RLE').encode(inpath, outpath)

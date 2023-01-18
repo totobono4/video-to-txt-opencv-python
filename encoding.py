@@ -2,11 +2,13 @@ import os
 import cv2 as cv
 import numpy as np
 from progress.bar import Bar
+import binascii
 
 class Encoding:
     encodings = {
         "BASIC",
-        "REPETITION"
+        "REPETITION",
+        "RLE"
     }
 
     def __init__(self, encoding=''):
@@ -16,198 +18,276 @@ class Encoding:
         file_name, _ = os.path.splitext(os.path.basename(inpath))
         outfile = os.path.join(outpath, "{}.txt".format(file_name))
 
-        with open(outfile, mode='w') as file:
-            match self.encoding:
-                case "BASIC":
-                    self.basic_encoder(inpath, file)
-                case "REPETITION":
-                    self.repetition_encoder(inpath, file)
-                case _:
-                    self.basic_encoder(inpath, file)
+        match self.encoding:
+            case "BASIC":
+                self.basic_encoder(inpath, outfile)
+            case "REPETITION":
+                self.repetition_encoder(inpath, outfile)
+            case "RLE":
+                self.RLE_encoder(inpath, outfile)
+            case _:
+                self.basic_encoder(inpath, outfile)
 
     def decode(self, inpath, outpath):
         file_name, _ = os.path.splitext(os.path.basename(inpath))
         outfile = os.path.join(outpath, "{}.avi".format(file_name))
 
-        with open(inpath, mode='r') as file:
-            match self.encoding:
-                case "BASIC":
-                    self.basic_decoder(file, outfile)
-                case "REPETITION":
-                    self.repetition_decoder(file, outfile)
-                case _:
-                    self.basic_decoder(file, outfile)
+        match self.encoding:
+            case "BASIC":
+                self.basic_decoder(inpath, outfile)
+            case "REPETITION":
+                self.repetition_decoder(inpath, outfile)
+            case "RLE":
+                self.RLE_decoder(inpath, outfile)
+            case _:
+                self.basic_decoder(inpath, outfile)
 
     def basic_encoder(self, infile, outfile):
-        cap = cv.VideoCapture(infile)
+        with open(outfile, mode='w') as file:
+            cap = cv.VideoCapture(infile)
 
-        outfile.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))
-        outfile.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_WIDTH)))
+            file.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))
+            file.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_WIDTH)))
 
-        totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-        bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
+            totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+            bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                print("Can't receive frame (stream end?). Exiting ...")
-                break
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    print("Can't receive frame (stream end?). Exiting ...")
+                    break
 
-            RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+                RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
 
-            for row in RGBframe:
-                for pixel in row:
-                    outfile.write("{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2]))
-                outfile.write('\n')
+                for row in RGBframe:
+                    for pixel in row:
+                        file.write("{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2]))
+                    file.write('\n')
 
-            cv.imshow('frame', frame)
+                cv.imshow('frame', frame)
 
-            if cv.waitKey(1) == ord('q'):
-                break
-            bar.next()
-        bar.finish()
-        cap.release()
-        cv.destroyAllWindows()
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
+            bar.finish()
+            cap.release()
+            cv.destroyAllWindows()
 
     def basic_decoder(self, infile, outfile):
-        fourcc = cv.VideoWriter_fourcc(*'XVID')
-        print('reading file...')
-        lines = infile.readlines()
-        frames_size = lines[:2]
-        frames_height = int(frames_size[0])
-        frames_width = int(frames_size[1])
-        out = cv.VideoWriter(outfile, fourcc, 30.0, (frames_width, frames_height))
-        frameslines = lines[2:]
-        frames = [[[] for _ in range(frames_height)] for _ in range(len(frameslines)//frames_height)]
+        with open(infile, mode='r') as file:
+            fourcc = cv.VideoWriter_fourcc(*'XVID')
+            print('reading file...')
+            lines = file.readlines()
+            frames_size = lines[:2]
+            frames_height = int(frames_size[0])
+            frames_width = int(frames_size[1])
+            out = cv.VideoWriter(outfile, fourcc, 30.0, (frames_width, frames_height))
+            frameslines = lines[2:]
+            frames = [[[] for _ in range(frames_height)] for _ in range(len(frameslines)//frames_height)]
 
-        bar = Bar('Reformatting Frames', max=len(frameslines), suffix='%(percent)d%%')
+            bar = Bar('Reformatting Frames', max=len(frameslines), suffix='%(percent)d%%')
 
-        for index in range(len(frameslines)):
-            frameline = frameslines[index]
-            framecount = index//frames_height
-            framerow = index%frames_height
+            for index in range(len(frameslines)):
+                frameline = frameslines[index]
+                framecount = index//frames_height
+                framerow = index%frames_height
 
-            newline = []
-            for pixelindex in range(frames_width):
-                pixelcolorsize = 2
-                pixelsize = pixelcolorsize * 3
-                pixelstart = pixelindex * pixelsize
+                newline = []
+                for pixelindex in range(frames_width):
+                    pixelcolorsize = 2
+                    pixelsize = pixelcolorsize * 3
+                    pixelstart = pixelindex * pixelsize
 
-                pixel = [
-                    int(frameline[pixelstart:pixelstart+pixelcolorsize], base=16),
-                    int(frameline[pixelstart+pixelcolorsize:pixelstart+(pixelcolorsize*2)], base=16),
-                    int(frameline[pixelstart+(pixelcolorsize*2):pixelstart+pixelsize], base=16)
-                ]
+                    pixel = [
+                        int(frameline[pixelstart:pixelstart+pixelcolorsize], base=16),
+                        int(frameline[pixelstart+pixelcolorsize:pixelstart+(pixelcolorsize*2)], base=16),
+                        int(frameline[pixelstart+(pixelcolorsize*2):pixelstart+pixelsize], base=16)
+                    ]
 
-                newline.append(pixel)
+                    newline.append(pixel)
 
-            frames[framecount][framerow] = newline
-            bar.next()
-        bar.finish()
+                frames[framecount][framerow] = newline
+                bar.next()
+            bar.finish()
 
-        bar = Bar('Decoding Video', max=len(frames), suffix='%(percent)d%%')
+            bar = Bar('Decoding Video', max=len(frames), suffix='%(percent)d%%')
 
-        for frame in frames:
-            rgbframe = np.ndarray((frames_height,frames_width,3), dtype=np.uint8)
-            for row in range(frames_height):
-                for pixel in range(frames_width):
-                    rgbframe[row][pixel][0] = np.uint8(frame[row][pixel][0])
-                    rgbframe[row][pixel][1] = np.uint8(frame[row][pixel][1])
-                    rgbframe[row][pixel][2] = np.uint8(frame[row][pixel][2])
+            for frame in frames:
+                rgbframe = np.ndarray((frames_height,frames_width,3), dtype=np.uint8)
+                for row in range(frames_height):
+                    for pixel in range(frames_width):
+                        rgbframe[row][pixel][0] = np.uint8(frame[row][pixel][0])
+                        rgbframe[row][pixel][1] = np.uint8(frame[row][pixel][1])
+                        rgbframe[row][pixel][2] = np.uint8(frame[row][pixel][2])
 
-            newframe = cv.cvtColor(rgbframe, cv.COLOR_RGB2BGR)
-            out.write(newframe)
-            cv.imshow('frame', newframe)
+                newframe = cv.cvtColor(rgbframe, cv.COLOR_RGB2BGR)
+                out.write(newframe)
+                cv.imshow('frame', newframe)
 
-            if cv.waitKey(1) == ord('q'):
-                break
-            bar.next()
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
 
-        bar.finish()
-        out.release()
-        cv.destroyAllWindows()
+            bar.finish()
+            out.release()
+            cv.destroyAllWindows()
 
     def repetition_encoder(self, infile, outfile):
-        cap = cv.VideoCapture(infile)
+        with open(outfile, mode='w') as file:
+            cap = cv.VideoCapture(infile)
 
-        outfile.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))
-        outfile.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_WIDTH)))
+            file.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))
+            file.write("{:n}\n".format(cap.get(cv.CAP_PROP_FRAME_WIDTH)))
 
-        totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-        bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
+            totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+            bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                print("Can't receive frame (stream end?). Exiting ...")
-                break
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    print("Can't receive frame (stream end?). Exiting ...")
+                    break
 
-            RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+                RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
 
-            repetition = 1
-            last_pixel = ''
+                repetition = 1
+                last_pixel = ''
 
-            for row in RGBframe:
-                for pixel in row:
-                    current_pixel = "{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2])
-                    if last_pixel == '':
-                        last_pixel = current_pixel
-                        continue
-                    if current_pixel == last_pixel:
-                        repetition = repetition+1
-                    else:
-                        outfile.write("{},{};".format(repetition, last_pixel))
-                        repetition = 1
-                        last_pixel = current_pixel
+                for row in RGBframe:
+                    for pixel in row:
+                        current_pixel = "{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2])
+                        if last_pixel == '':
+                            last_pixel = current_pixel
+                            continue
+                        if current_pixel == last_pixel:
+                            repetition = repetition+1
+                        else:
+                            file.write("{},{};".format(repetition, last_pixel))
+                            repetition = 1
+                            last_pixel = current_pixel
 
-            outfile.write("{},{}".format(repetition, last_pixel))
-            outfile.write('\n')
-            cv.imshow('frame', frame)
+                file.write("{},{}".format(repetition, last_pixel))
+                file.write('\n')
+                cv.imshow('frame', frame)
 
-            if cv.waitKey(1) == ord('q'):
-                break
-            bar.next()
-        bar.finish()
-        cap.release()
-        cv.destroyAllWindows()
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
+            bar.finish()
+            cap.release()
+            cv.destroyAllWindows()
 
     def repetition_decoder(self, infile, outfile):
-        fourcc = cv.VideoWriter_fourcc(*'XVID')
-        print('reading file...')
-        lines = infile.readlines()
-        frames_size = lines[:2]
-        frames_height = int(frames_size[0])
-        frames_width = int(frames_size[1])
-        out = cv.VideoWriter(outfile, fourcc, 30.0, (frames_width, frames_height))
-        frameslines = lines[2:]
+        with open(infile, mode='r') as file:
+            fourcc = cv.VideoWriter_fourcc(*'XVID')
+            print('reading file...')
+            lines = file.readlines()
+            frames_size = lines[:2]
+            frames_height = int(frames_size[0])
+            frames_width = int(frames_size[1])
+            out = cv.VideoWriter(outfile, fourcc, 30.0, (frames_width, frames_height))
+            frameslines = lines[2:]
 
-        bar = Bar('Decoding Video', max=len(frameslines), suffix='%(percent)d%%')
+            bar = Bar('Decoding Video', max=len(frameslines), suffix='%(percent)d%%')
 
-        for index in range(len(frameslines)):
-            frame = np.ndarray((frames_height,frames_width,3), dtype=np.uint8)
-            frameline = frameslines[index]
-            repetitions_format = frameline.split(';')
-            pixels = []
+            for index in range(len(frameslines)):
+                frame = np.ndarray((frames_height,frames_width,3), dtype=np.uint8)
+                frameline = frameslines[index]
+                repetitions_format = frameline.split(';')
+                pixels = []
 
-            for repetition_format in repetitions_format:
-                repetition, pixel_format = repetition_format.split(',')
-                for _ in range(int(repetition)):
-                    pixels.append(pixel_format[:6])
+                for repetition_format in repetitions_format:
+                    repetition, pixel_format = repetition_format.split(',')
+                    for _ in range(int(repetition)):
+                        pixels.append(pixel_format[:6])
 
-            for pixelindex in range(len(pixels)):
-                frame[pixelindex//frames_width][pixelindex%frames_width] = [
-                    int(pixels[pixelindex][:2], base=16),
-                    int(pixels[pixelindex][2:4], base=16),
-                    int(pixels[pixelindex][4:], base=16)
-                ]
+                for pixelindex in range(len(pixels)):
+                    frame[pixelindex//frames_width][pixelindex%frames_width] = [
+                        int(pixels[pixelindex][:2], base=16),
+                        int(pixels[pixelindex][2:4], base=16),
+                        int(pixels[pixelindex][4:], base=16)
+                    ]
 
-            newframe = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
-            out.write(newframe)
-            cv.imshow('frame', newframe)
+                newframe = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
+                out.write(newframe)
+                cv.imshow('frame', newframe)
 
-            if cv.waitKey(1) == ord('q'):
-                break
-            bar.next()
-        bar.finish()
-        out.release()
-        cv.destroyAllWindows()
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
+            bar.finish()
+            out.release()
+            cv.destroyAllWindows()
+
+    def RLE_encoder(self, infile, outfile):
+        with open(outfile, mode='wb') as file:
+            cap = cv.VideoCapture(infile)
+
+            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))))
+            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_WIDTH)))))
+
+            totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+            bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    print("Can't receive frame (stream end?). Exiting ...")
+                    break
+
+                RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+
+                # La donnée sera de 16 bits pour la répétition et 16 bits pour la couleur.
+                # De 0 à 32767, les non-répétitions et de 32768 à 65535, les répétitions.
+                repetition_offset = 32768
+
+                difference = -1
+                last_sequence = []
+
+                repetition = -1
+                last_pixel = ''
+
+                for row in RGBframe:
+                    for pixel in row:
+                        current_pixel = "{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2])
+                        if last_pixel == '':
+                            last_pixel = current_pixel
+                            continue
+                        if current_pixel == last_pixel:
+                            if difference >= 0:
+                                file.write(binascii.unhexlify("{:04X}".format(difference)))
+                                for last_diff in last_sequence:
+                                    file.write(binascii.unhexlify("{}".format(last_diff)))
+                                last_sequence = []
+                                difference = -1
+                            if repetition == repetition_offset-1:
+                                file.write(binascii.unhexlify("{:04X}{}".format(repetition_offset+repetition, last_pixel)))
+                                repetition = -1
+                            repetition = repetition+1
+                        else:
+                            if repetition >= 0:
+                                file.write(binascii.unhexlify("{:04X}{}".format(repetition_offset+repetition, last_pixel)))
+                                repetition = -1
+                            if difference == repetition_offset-1:
+                                file.write(binascii.unhexlify("{:04X}".format(difference)))
+                                for last_diff in last_sequence:
+                                    file.write(binascii.unhexlify("{}".format(last_diff)))
+                                last_sequence = []
+                                difference = -1
+                            difference = difference+1
+                            last_sequence.append(last_pixel)
+
+                cv.imshow('frame', frame)
+
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
+            bar.finish()
+            cap.release()
+            cv.destroyAllWindows()
+
+    def RLE_decoder(self, infile, outfile):
+        with open(infile, mode='rb') as file:
+            pass
+
