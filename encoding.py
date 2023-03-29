@@ -4,6 +4,36 @@ import numpy as np
 from progress.bar import Bar
 import binascii
 
+class Buffer:
+    def __init__(self, buffer):
+        self.buffer = buffer
+        self.cursor = 0
+
+    def get_data(self, data_len):
+        ret = int(self.buffer[self.cursor:self.cursor+data_len], base=16)
+        self.cursor = self.cursor + data_len
+        return ret
+    
+    def end(self):
+        return len(self.buffer[self.cursor:]) == 0
+
+class Frame:
+    def __init__(self, frame_height, frame_width):
+        self.frame = np.ndarray((frame_height,frame_width,3), dtype=np.uint8)
+        self.frame_height = frame_height
+        self.frame_width = frame_width
+        self.cursor = 0
+    
+    def insert_pixel(self, pixel):
+        self.frame[self.cursor//self.frame_width][self.cursor%self.frame_width] = pixel
+        self.cursor = self.cursor+1
+    
+    def end(self):
+        return self.cursor == self.frame_height * self.frame_width
+    
+    def get_frame(self):
+        return self.frame
+
 class Encoding:
     encodings = {
         "BASIC",
@@ -42,8 +72,12 @@ class Encoding:
                 self.basic_decoder(inpath, outfile)
             case "REPETITION":
                 self.repetition_decoder(inpath, outfile)
-            case "RLE":
-                self.RLE_decoder(inpath, outfile)
+            case "RLE16":
+                self.RLE16_decoder(inpath, outfile)
+            case "RLE16G":
+                self.RLE16G_decoder(inpath, outfile)
+            case "RLE24":
+                self.RLE24_decoder(inpath, outfile)
             case _:
                 self.basic_decoder(inpath, outfile)
 
@@ -330,6 +364,8 @@ class Encoding:
                 repetition = 0
                 last_pixel = ''
 
+                total_pixels = 0
+
                 for row in RGBframe:
                     for pixel in row:
                         current_pixel = "{:02X}".format(pixel[0])
@@ -343,21 +379,25 @@ class Encoding:
                                 difference = difference-1
                                 last_sequence.pop()
                                 file.write(binascii.unhexlify("{:04X}".format(difference)))
+                                total_pixels = total_pixels+difference
                                 for last_diff in last_sequence:
                                     file.write(binascii.unhexlify("{}".format(last_diff)))
                                 last_sequence = []
                                 difference = -1
                             if repetition == rle_offset-1: # Si on atteint la limite de chaîne de répétition
                                 file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                                total_pixels = total_pixels+repetition
                                 repetition = 0
                             repetition = repetition+1
                         else: # Si le pixel est différent
                             if repetition > 0: # Si il y avait une chaîne de pixels répétés
                                 file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                                total_pixels = total_pixels+repetition
                                 repetition = 0
                                 last_sequence = []
                             if difference == rle_offset-1: # Si on atteint la limite de chaîne de différence
                                 file.write(binascii.unhexlify("{:04X}".format(difference)))
+                                total_pixels = total_pixels+difference
                                 for last_diff in last_sequence:
                                     file.write(binascii.unhexlify("{}".format(last_diff)))
                                 last_sequence = []
@@ -366,7 +406,10 @@ class Encoding:
                             last_sequence.append(current_pixel)
                         last_pixel = current_pixel
 
+                print(total_pixels)
                 cv.imshow('frame', frame)
+                difference = -1
+                repetition = 0
 
                 if cv.waitKey(1) == ord('q'):
                     break
@@ -377,7 +420,65 @@ class Encoding:
 
     def RLE16G_decoder(self, infile, outfile):
         with open(infile, mode='rb') as file:
-            pass
+            fourcc = cv.VideoWriter_fourcc(*'XVID')
+            print('reading file...')
+            
+            buffer = Buffer(binascii.hexlify(file.read()).upper())
+
+            frames_height = buffer.get_data(4)
+            frames_width = buffer.get_data(4)
+
+            out = cv.VideoWriter(outfile, fourcc, 30.0, (frames_width, frames_height))
+
+            print('decoding video...')
+            
+            # La donnée sera de 16 bits pour la répétition et 24 bits pour la couleur.
+            # De 0x0000 à 0x8000, les non-répétitions et de 0x8000 à 0xFFFF, les répétitions.
+            rle_offset = int("8000", base=16)
+            
+            # Machine à état :
+            # 0: lire les nombres
+            # 1: lire les différences
+            # 2: lire les répétitions
+            etat = 0
+            
+            occurences = -1
+            
+            pixel = int("00",base=16)
+
+            while not buffer.end():
+                frame = Frame(frames_height,frames_width)
+                
+                while not frame.end():
+                    match etat:
+                        case 0: # lire les nombres
+                            occurences = buffer.get_data(4)
+                            if occurences < rle_offset:
+                                etat = 1
+                            else:
+                                occurences = occurences - rle_offset
+                                pixel = buffer.get_data(2)
+                                etat = 2
+                        case 1: # lire les différences
+                            pixel = buffer.get_data(2)
+                            frame.insert_pixel([pixel,pixel,pixel])
+                            occurences = occurences - 1
+                            if occurences == -1:
+                                etat = 0
+                        case 2: # lire les répétitions
+                            frame.insert_pixel([pixel,pixel,pixel])
+                            occurences = occurences - 1
+                            if occurences == -1:
+                                etat = 0
+                        case _:
+                            pass
+                
+                new_frame = cv.cvtColor(frame.get_frame(), cv.COLOR_RGB2BGR)
+                out.write(new_frame)
+                cv.imshow('frame', new_frame)
+            
+            out.release()
+            cv.destroyAllWindows()
 
     def RLE24_encoder(self, infile, outfile):
         with open(outfile, mode='wb') as file:
