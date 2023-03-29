@@ -8,7 +8,8 @@ class Encoding:
     encodings = {
         "BASIC",
         "REPETITION",
-        "RLE"
+        "RLE16",
+        "RLE24"
     }
 
     def __init__(self, encoding=''):
@@ -23,8 +24,12 @@ class Encoding:
                 self.basic_encoder(inpath, outfile)
             case "REPETITION":
                 self.repetition_encoder(inpath, outfile)
-            case "RLE":
-                self.RLE_encoder(inpath, outfile)
+            case "RLE16":
+                self.RLE16_encoder(inpath, outfile)
+            case "RLE16G":
+                self.RLE16G_encoder(inpath, outfile)
+            case "RLE24":
+                self.RLE24_encoder(inpath, outfile)
             case _:
                 self.basic_encoder(inpath, outfile)
 
@@ -220,7 +225,7 @@ class Encoding:
             out.release()
             cv.destroyAllWindows()
 
-    def RLE_encoder(self, infile, outfile):
+    def RLE16_encoder(self, infile, outfile):
         with open(outfile, mode='wb') as file:
             cap = cv.VideoCapture(infile)
 
@@ -238,14 +243,14 @@ class Encoding:
 
                 RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
 
-                # La donnée sera de 16 bits pour la répétition et 16 bits pour la couleur.
-                # De 0 à 32767, les non-répétitions et de 32768 à 65535, les répétitions.
-                repetition_offset = 32768
+                # La donnée sera de 16 bits pour la répétition et 24 bits pour la couleur.
+                # De 0x0000 à 0x8000, les non-répétitions et de 0x8000 à 0xFFFF, les répétitions.
+                rle_offset = int("8000", base=16)
 
                 difference = -1
                 last_sequence = []
 
-                repetition = -1
+                repetition = 0
                 last_pixel = ''
 
                 for row in RGBframe:
@@ -254,29 +259,35 @@ class Encoding:
                         if last_pixel == '':
                             last_pixel = current_pixel
                             continue
-                        if current_pixel == last_pixel:
-                            if difference >= 0:
+                        if current_pixel == last_pixel: # Si le pixel est répété
+                            if difference == 0:
+                                difference = -1
+                            if difference > 0: # Si il y avait une chaîne de pixels différents
+                                difference = difference-1
+                                last_sequence.pop()
                                 file.write(binascii.unhexlify("{:04X}".format(difference)))
                                 for last_diff in last_sequence:
                                     file.write(binascii.unhexlify("{}".format(last_diff)))
                                 last_sequence = []
                                 difference = -1
-                            if repetition == repetition_offset-1:
-                                file.write(binascii.unhexlify("{:04X}{}".format(repetition_offset+repetition, last_pixel)))
-                                repetition = -1
+                            if repetition == rle_offset-1: # Si on atteint la limite de chaîne de répétition
+                                file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                                repetition = 0
                             repetition = repetition+1
-                        else:
-                            if repetition >= 0:
-                                file.write(binascii.unhexlify("{:04X}{}".format(repetition_offset+repetition, last_pixel)))
-                                repetition = -1
-                            if difference == repetition_offset-1:
+                        else: # Si le pixel est différent
+                            if repetition > 0: # Si il y avait une chaîne de pixels répétés
+                                file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                                repetition = 0
+                                last_sequence = []
+                            if difference == rle_offset-1: # Si on atteint la limite de chaîne de différence
                                 file.write(binascii.unhexlify("{:04X}".format(difference)))
                                 for last_diff in last_sequence:
                                     file.write(binascii.unhexlify("{}".format(last_diff)))
                                 last_sequence = []
                                 difference = -1
                             difference = difference+1
-                            last_sequence.append(last_pixel)
+                            last_sequence.append(current_pixel)
+                        last_pixel = current_pixel
 
                 cv.imshow('frame', frame)
 
@@ -287,7 +298,160 @@ class Encoding:
             cap.release()
             cv.destroyAllWindows()
 
-    def RLE_decoder(self, infile, outfile):
+    def RLE16_decoder(self, infile, outfile):
         with open(infile, mode='rb') as file:
             pass
 
+    def RLE16G_encoder(self, infile, outfile):
+        with open(outfile, mode='wb') as file:
+            cap = cv.VideoCapture(infile)
+
+            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))))
+            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_WIDTH)))))
+
+            totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+            bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    print("Can't receive frame (stream end?). Exiting ...")
+                    break
+
+                RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+
+                # La donnée sera de 16 bits pour la répétition et 24 bits pour la couleur.
+                # De 0x0000 à 0x8000, les non-répétitions et de 0x8000 à 0xFFFF, les répétitions.
+                rle_offset = int("8000", base=16)
+
+                difference = -1
+                last_sequence = []
+
+                repetition = 0
+                last_pixel = ''
+
+                for row in RGBframe:
+                    for pixel in row:
+                        current_pixel = "{:02X}".format(pixel[0])
+                        if last_pixel == '':
+                            last_pixel = current_pixel
+                            continue
+                        if current_pixel == last_pixel: # Si le pixel est répété
+                            if difference == 0:
+                                difference = -1
+                            if difference > 0: # Si il y avait une chaîne de pixels différents
+                                difference = difference-1
+                                last_sequence.pop()
+                                file.write(binascii.unhexlify("{:04X}".format(difference)))
+                                for last_diff in last_sequence:
+                                    file.write(binascii.unhexlify("{}".format(last_diff)))
+                                last_sequence = []
+                                difference = -1
+                            if repetition == rle_offset-1: # Si on atteint la limite de chaîne de répétition
+                                file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                                repetition = 0
+                            repetition = repetition+1
+                        else: # Si le pixel est différent
+                            if repetition > 0: # Si il y avait une chaîne de pixels répétés
+                                file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                                repetition = 0
+                                last_sequence = []
+                            if difference == rle_offset-1: # Si on atteint la limite de chaîne de différence
+                                file.write(binascii.unhexlify("{:04X}".format(difference)))
+                                for last_diff in last_sequence:
+                                    file.write(binascii.unhexlify("{}".format(last_diff)))
+                                last_sequence = []
+                                difference = -1
+                            difference = difference+1
+                            last_sequence.append(current_pixel)
+                        last_pixel = current_pixel
+
+                cv.imshow('frame', frame)
+
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
+            bar.finish()
+            cap.release()
+            cv.destroyAllWindows()
+
+    def RLE16G_decoder(self, infile, outfile):
+        with open(infile, mode='rb') as file:
+            pass
+
+    def RLE24_encoder(self, infile, outfile):
+        with open(outfile, mode='wb') as file:
+            cap = cv.VideoCapture(infile)
+
+            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))))
+            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_WIDTH)))))
+
+            totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+            bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    print("Can't receive frame (stream end?). Exiting ...")
+                    break
+
+                RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+
+                # La donnée sera de 24 bits pour la répétition et 24 bits pour la couleur.
+                # De 0x0000 à 0x800000, les non-répétitions et de 0x800000 à 0xFFFFFF, les répétitions.
+                rle_offset = int("800000", base=16)
+
+                difference = -1
+                last_sequence = []
+
+                repetition = 0
+                last_pixel = ''
+
+                for row in RGBframe:
+                    for pixel in row:
+                        current_pixel = "{:02X}{:02X}{:02X}".format(pixel[0], pixel[1], pixel[2])
+                        if last_pixel == '':
+                            last_pixel = current_pixel
+                            continue
+                        if current_pixel == last_pixel: # Si le pixel est répété
+                            if difference == 0:
+                                difference = -1
+                            if difference > 0: # Si il y avait une chaîne de pixels différents
+                                difference = difference-1
+                                last_sequence.pop()
+                                file.write(binascii.unhexlify("{:06X}".format(difference)))
+                                for last_diff in last_sequence:
+                                    file.write(binascii.unhexlify("{}".format(last_diff)))
+                                last_sequence = []
+                                difference = -1
+                            if repetition == rle_offset-1: # Si on atteint la limite de chaîne de répétition
+                                file.write(binascii.unhexlify("{:06X}{}".format(rle_offset+repetition, last_pixel)))
+                                repetition = 0
+                            repetition = repetition+1
+                        else: # Si le pixel est différent
+                            if repetition > 0: # Si il y avait une chaîne de pixels répétés
+                                file.write(binascii.unhexlify("{:06X}{}".format(rle_offset+repetition, last_pixel)))
+                                repetition = 0
+                                last_sequence = []
+                            if difference == rle_offset-1: # Si on atteint la limite de chaîne de différence
+                                file.write(binascii.unhexlify("{:06X}".format(difference)))
+                                for last_diff in last_sequence:
+                                    file.write(binascii.unhexlify("{}".format(last_diff)))
+                                last_sequence = []
+                                difference = -1
+                            difference = difference+1
+                            last_sequence.append(current_pixel)
+                        last_pixel = current_pixel
+
+                cv.imshow('frame', frame)
+
+                if cv.waitKey(1) == ord('q'):
+                    break
+                bar.next()
+            bar.finish()
+            cap.release()
+            cv.destroyAllWindows()
+
+    def RLE24_decoder(self, infile, outfile):
+        with open(infile, mode='rb') as file:
+            pass
