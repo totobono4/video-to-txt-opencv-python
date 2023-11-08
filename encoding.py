@@ -371,6 +371,7 @@ class Encoding:
                         current_pixel = "{:02X}".format(pixel[0])
                         if last_pixel == '':
                             last_pixel = current_pixel
+                            total_pixels = total_pixels + 1
                             continue
                         if current_pixel == last_pixel: # Si le pixel est répété
                             if difference == 0:
@@ -379,9 +380,9 @@ class Encoding:
                                 difference = difference-1
                                 last_sequence.pop()
                                 file.write(binascii.unhexlify("{:04X}".format(difference)))
-                                total_pixels = total_pixels+difference
                                 for last_diff in last_sequence:
                                     file.write(binascii.unhexlify("{}".format(last_diff)))
+                                total_pixels = total_pixels+difference+1
                                 last_sequence = []
                                 difference = -1
                             if repetition == rle_offset-1: # Si on atteint la limite de chaîne de répétition
@@ -392,14 +393,14 @@ class Encoding:
                         else: # Si le pixel est différent
                             if repetition > 0: # Si il y avait une chaîne de pixels répétés
                                 file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
-                                total_pixels = total_pixels+repetition
+                                total_pixels = total_pixels+repetition+1
                                 repetition = 0
                                 last_sequence = []
                             if difference == rle_offset-1: # Si on atteint la limite de chaîne de différence
                                 file.write(binascii.unhexlify("{:04X}".format(difference)))
-                                total_pixels = total_pixels+difference
                                 for last_diff in last_sequence:
                                     file.write(binascii.unhexlify("{}".format(last_diff)))
+                                total_pixels = total_pixels+difference
                                 last_sequence = []
                                 difference = -1
                             difference = difference+1
@@ -409,6 +410,12 @@ class Encoding:
                 if repetition > 0:
                     file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
                     total_pixels = total_pixels+repetition
+
+                if difference > 0:
+                    file.write(binascii.unhexlify("{:04X}".format(difference)))
+                    for last_diff in last_sequence:
+                        file.write(binascii.unhexlify("{}".format(last_diff)))
+                    total_pixels = total_pixels+difference
 
                 print(total_pixels)
                 cv.imshow('frame', frame)
