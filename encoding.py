@@ -406,6 +406,10 @@ class Encoding:
                             last_sequence.append(current_pixel)
                         last_pixel = current_pixel
 
+                if repetition > 0:
+                    file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
+                    total_pixels = total_pixels+repetition
+
                 print(total_pixels)
                 cv.imshow('frame', frame)
                 difference = -1
