@@ -26,7 +26,7 @@ class Frame:
     
     def insert_pixel(self, pixel):
         self.frame[self.cursor//self.frame_width][self.cursor%self.frame_width] = pixel
-        self.cursor = self.cursor+1
+        self.cursor += 1
     
     def end(self):
         return self.cursor == self.frame_height * self.frame_width
@@ -340,8 +340,11 @@ class Encoding:
         with open(outfile, mode='wb') as file:
             cap = cv.VideoCapture(infile)
 
-            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_HEIGHT)))))
-            file.write(binascii.unhexlify("{:04X}".format(int(cap.get(cv.CAP_PROP_FRAME_WIDTH)))))
+            height = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
+            width = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
+
+            file.write(binascii.unhexlify("{:04X}".format(height)))
+            file.write(binascii.unhexlify("{:04X}".format(width)))
 
             totalframes = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
             bar = Bar('Encoding Video', max=totalframes, suffix='%(percent)d%%')
@@ -357,70 +360,68 @@ class Encoding:
                 # La donnée sera de 16 bits pour la répétition et 24 bits pour la couleur.
                 # De 0x0000 à 0x8000, les non-répétitions et de 0x8000 à 0xFFFF, les répétitions.
                 rle_offset = int("8000", base=16)
+                dif_max = int("7FFF", base=16)
+                rep_max = int("FFFF", base=16)
 
-                difference = -1
                 last_sequence = []
-
-                repetition = 0
                 last_pixel = ''
+                pixel_count = -1
 
-                total_pixels = 0
+                # Machine à état :
+                # 0: choisir le mode (répétitions ou différences)
+                # 1: mode répétitions
+                # 2: mode différences
+                etat = 0
 
-                for row in RGBframe:
-                    for pixel in row:
+                for rowIndex, row in enumerate(RGBframe):
+                    for pixelIndex, pixel in enumerate(row):
                         current_pixel = "{:02X}".format(pixel[0])
+                        pixel_count += 1
+
                         if last_pixel == '':
                             last_pixel = current_pixel
-                            total_pixels = total_pixels + 1
                             continue
-                        if current_pixel == last_pixel: # Si le pixel est répété
-                            if difference == 0:
-                                difference = -1
-                            if difference > 0: # Si il y avait une chaîne de pixels différents
-                                difference = difference-1
-                                last_sequence.pop()
-                                file.write(binascii.unhexlify("{:04X}".format(difference)))
-                                for last_diff in last_sequence:
-                                    file.write(binascii.unhexlify("{}".format(last_diff)))
-                                total_pixels = total_pixels+difference+1
-                                last_sequence = []
-                                difference = -1
-                            if repetition == rle_offset-1: # Si on atteint la limite de chaîne de répétition
-                                file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
-                                total_pixels = total_pixels+repetition
-                                repetition = 0
-                            repetition = repetition+1
-                        else: # Si le pixel est différent
-                            if repetition > 0: # Si il y avait une chaîne de pixels répétés
-                                file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
-                                total_pixels = total_pixels+repetition+1
-                                repetition = 0
-                                last_sequence = []
-                            if difference == rle_offset-1: # Si on atteint la limite de chaîne de différence
-                                file.write(binascii.unhexlify("{:04X}".format(difference)))
-                                for last_diff in last_sequence:
-                                    file.write(binascii.unhexlify("{}".format(last_diff)))
-                                total_pixels = total_pixels+difference
-                                last_sequence = []
-                                difference = -1
-                            difference = difference+1
-                            last_sequence.append(current_pixel)
+
+                        match etat:
+                            case 0: # choisir le mode
+                                if last_pixel == current_pixel:
+                                    etat = 1
+                                else:
+                                    etat = 2
+                            case _:
+                                pass
+
+                        match etat:
+                            case 1: # mode répétitions
+                                if last_pixel != current_pixel or pixel_count == rep_max - rle_offset or (rowIndex == height-1 and pixelIndex == width-1):
+                                    if rowIndex == height-1 and pixelIndex == width-1:
+                                        pixel_count += 1
+
+                                    file.write(binascii.unhexlify("{:04X}{}".format(rle_offset + pixel_count, last_pixel)))
+
+                                    pixel_count = 0
+                                    etat = 0
+                                    
+                            case 2: # mode différences
+                                last_sequence.append(last_pixel)
+                                if last_pixel == current_pixel or pixel_count == dif_max or (rowIndex == height-1 and pixelIndex == width-1):
+                                    if rowIndex == height-1 and pixelIndex == width-1:
+                                        last_sequence.append(current_pixel)
+                                        pixel_count += 1
+
+                                    file.write(binascii.unhexlify("{:04X}".format(pixel_count)))
+                                    for dif_pixel in last_sequence:
+                                        file.write(binascii.unhexlify("{}".format(dif_pixel)))
+
+                                    pixel_count = 0
+                                    etat = 0
+                                    last_sequence = []
+                            case _:
+                                pass
+
                         last_pixel = current_pixel
 
-                if repetition > 0:
-                    file.write(binascii.unhexlify("{:04X}{}".format(rle_offset+repetition, last_pixel)))
-                    total_pixels = total_pixels+repetition
-
-                if difference > 0:
-                    file.write(binascii.unhexlify("{:04X}".format(difference)))
-                    for last_diff in last_sequence:
-                        file.write(binascii.unhexlify("{}".format(last_diff)))
-                    total_pixels = total_pixels+difference
-
-                print(total_pixels)
                 cv.imshow('frame', frame)
-                difference = -1
-                repetition = 0
 
                 if cv.waitKey(1) == ord('q'):
                     break
@@ -453,13 +454,13 @@ class Encoding:
             # 2: lire les répétitions
             etat = 0
             
-            occurences = -1
+            occurences = 0
             
             pixel = int("00",base=16)
 
             while not buffer.end():
                 frame = Frame(frames_height,frames_width)
-                
+
                 while not frame.end():
                     match etat:
                         case 0: # lire les nombres
@@ -467,26 +468,28 @@ class Encoding:
                             if occurences < rle_offset:
                                 etat = 1
                             else:
-                                occurences = occurences - rle_offset
+                                occurences -= rle_offset
                                 pixel = buffer.get_data(2)
                                 etat = 2
                         case 1: # lire les différences
                             pixel = buffer.get_data(2)
                             frame.insert_pixel([pixel,pixel,pixel])
-                            occurences = occurences - 1
-                            if occurences == -1:
+
+                            occurences -= 1
+                            if occurences == 0:
                                 etat = 0
                         case 2: # lire les répétitions
                             frame.insert_pixel([pixel,pixel,pixel])
-                            occurences = occurences - 1
-                            if occurences == -1:
+
+                            occurences -= 1
+                            if occurences == 0:
                                 etat = 0
                         case _:
                             pass
                 
                 new_frame = cv.cvtColor(frame.get_frame(), cv.COLOR_RGB2BGR)
                 out.write(new_frame)
-                cv.imshow('frame', new_frame)
+                # cv.imshow('frame', new_frame)
             
             out.release()
             cv.destroyAllWindows()
