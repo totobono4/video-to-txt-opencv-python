@@ -9,6 +9,6 @@ if not os.path.isdir(outpath):
     os.mkdir(outpath)
 
 Tk().withdraw()
-inpath = askopenfilename(title='Select a txt...', filetypes=[('txt {txt}')])
+inpath = askopenfilename(title='Select a tvf...', filetypes=[('tvf {tvf}')])
 
 Encoding('RLE16G').decode(inpath, outpath)

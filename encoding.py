@@ -47,7 +47,7 @@ class Encoding:
 
     def encode(self, inpath, outpath):
         file_name, _ = os.path.splitext(os.path.basename(inpath))
-        outfile = os.path.join(outpath, "{}.txt".format(file_name))
+        outfile = os.path.join(outpath, "{}.tvf".format(file_name))
 
         match self.encoding:
             case "BASIC":
