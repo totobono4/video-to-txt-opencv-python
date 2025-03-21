@@ -357,8 +357,8 @@ class Encoding:
 
                 RGBframe = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
 
-                # La donnée sera de 16 bits pour la répétition et 24 bits pour la couleur.
-                # De 0x0000 à 0x8000, les non-répétitions et de 0x8000 à 0xFFFF, les répétitions.
+                # La donnée sera de 16 bits pour la répétition et 8 bits pour la nuance de gris.
+                # De 0x0000 à 0x7FFF, les non-répétitions et de 0x8000 à 0xFFFF, les répétitions.
                 rle_offset = int("8000", base=16)
                 dif_max = int("7FFF", base=16)
                 rep_max = int("FFFF", base=16)
